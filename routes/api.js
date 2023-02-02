@@ -5,34 +5,25 @@ const Stock = require('../models/stock');
 module.exports = function (app) {
   app.route('/api/stock-prices').get(async (req, res) => {
     let { stock, like } = req.query;
-    stock = stock.toUpperCase();
     like = like === 'true';
 
     try {
-      const fetchData = async (stock) => {
-        const response = await fetch(
+      const getUserIp = async () => {
+        const fetchIp = await fetch(`https://api.ipify.org/?format=json`);
+        const ipJson = await fetchIp.json();
+        return ipJson.ip;
+      };
+
+      const getStockPrice = async (stock) => {
+        const fetchStock = await fetch(
           `https://stock-price-checker-proxy.freecodecamp.rocks/v1/stock/${stock}/quote`
         );
-        const data = await response.json();
-        return data.latestPrice;
+        const stockJson = await fetchStock.json();
+        return stockJson.latestPrice;
       };
 
-      const price = await fetchData(stock);
-
-      if (!price) {
-        throw new Error(`Can not find price with the symbol: ${stock}`);
-      }
-
-      const getIp = async () => {
-        const response = await fetch('https://api.ipify.org/?format=json');
-        const json = response.json();
-        return json.ip;
-      };
-
-      const userIp = await getIp();
-
-      const getLikes = async (like, stock, ip) => {
-        const stockInDB = await Stock.findOne({ stock }).then((doc) => {
+      const getLikes = async (stock, ip, like) => {
+        const stockInDB = await Stock.findOne({ stock }).then(async (doc) => {
           if (doc && like && !doc.ips.includes(ip)) {
             doc.ips = doc.ips.concat(ip);
             doc.likes = doc.likes + 1;
@@ -43,7 +34,6 @@ module.exports = function (app) {
             return doc;
           }
         });
-
         if (stockInDB) {
           return stockInDB.likes;
         } else {
@@ -58,14 +48,40 @@ module.exports = function (app) {
         }
       };
 
-      const likes = await getLikes(like, stock, userIp);
-
-      const stockData = {
-        stock: stock,
-        price: price,
-        likes: likes,
+      const getAllStockData = async (stock, ip, like) => {
+        stock = stock.toUpperCase();
+        const likes = await getLikes(stock, ip, like);
+        const price = await getStockPrice(stock);
+        return {
+          stock: stock,
+          price: price,
+          likes: likes,
+        };
       };
-      res.status(200).send({ stockData });
+
+      let ip = await getUserIp();
+      ip = ip.slice(8);
+
+      if (Array.isArray(stock) && stock.length === 2) {
+        const firstStock = await getAllStockData(stock[0], ip, like);
+        const secondStock = await getAllStockData(stock[1], ip, like);
+        const stockData = [
+          {
+            price: firstStock.price,
+            stock: firstStock.stock,
+            rel_likes: firstStock.likes - secondStock.likes,
+          },
+          {
+            price: secondStock.price,
+            stock: secondStock.stock,
+            rel_likes: secondStock.likes - firstStock.likes,
+          },
+        ];
+        return res.status(200).send({ stockData });
+      } else {
+        const stockData = await getAllStockData(stock, ip, like);
+        res.status(200).send({ stockData });
+      }
     } catch (error) {
       res.status(200).send({ error: error.message });
     }
